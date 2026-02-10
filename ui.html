@@ -11,6 +11,12 @@
       box-sizing: border-box;
     }
 
+    html {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+    }
+
     body {
       font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 12px;
@@ -18,7 +24,8 @@
       background: var(--figma-color-bg, #fff);
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
       overflow: hidden;
     }
 
@@ -50,6 +57,7 @@
     /* ── Table Container ───────────────── */
     .table-wrap {
       flex: 1;
+      width: 100%;
       overflow: auto;
       min-height: 0;
     }
@@ -155,7 +163,7 @@
     td.numeric {
       font-family: "SF Mono", "Fira Code", monospace;
       font-size: 11px;
-      text-align: right;
+      text-align: left;
     }
 
     /* ── Unlinked row ──────────────────── */
@@ -167,6 +175,17 @@
     .mixed {
       color: #d4a017;
       font-style: italic;
+    }
+
+    /* ── Modified row ─────────────────── */
+    tr.modified td {
+      color: #00C853;
+      background: #E8F5E9;
+    }
+
+    .footer-info .modified-count {
+      color: #00C853;
+      font-weight: 600;
     }
 
     /* ── Footer ────────────────────────── */
@@ -353,15 +372,25 @@
       btnCopy.disabled = false;
 
       var unlinkedCount = rows.filter(function (r) { return r.isUnlinked; }).length;
+      var modifiedCount = rows.filter(function (r) { return r.isModified; }).length;
+      var infoParts = [];
       if (unlinkedCount > 0) {
-        footerInfo.innerHTML = '⚠️ 스타일 미연결: <span class="unlinked-count">' + unlinkedCount + '개</span>';
-      } else {
+        infoParts.push('⚠️ 미연결: <span class="unlinked-count">' + unlinkedCount + '개</span>');
+      }
+      if (modifiedCount > 0) {
+        infoParts.push('🟢 수정됨: <span class="modified-count">' + modifiedCount + '개</span>');
+      }
+      if (infoParts.length === 0) {
         footerInfo.innerHTML = '✅ 모든 텍스트에 스타일 연결됨';
+      } else {
+        footerInfo.innerHTML = infoParts.join(' &nbsp;│&nbsp; ');
       }
 
       tbody.innerHTML = rows.map(function (r, i) {
-        var rowClass = r.isUnlinked ? 'unlinked' : '';
-        return '<tr class="' + rowClass + '" data-index="' + i + '">'
+        var classes = [];
+        if (r.isUnlinked) classes.push('unlinked');
+        if (r.isModified) classes.push('modified');
+        return '<tr class="' + classes.join(' ') + '" data-index="' + i + '">'
           + cellHtml(r.textContent, 'text-content')
           + cellHtml(r.styleName, 'style-name')
           + cellHtml(r.fontSize, 'numeric')

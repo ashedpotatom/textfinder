@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────
 
 interface TextRowData {
+    nodeId: string;
     textContent: string;
     styleName: string;
     fontSize: string;
@@ -14,11 +15,8 @@ interface TextRowData {
 
 // ── Recursive TEXT node finder (skips invisible) ──
 function findVisibleTextNodes(node: SceneNode): TextNode[] {
-    // Skip hidden nodes entirely
     if (!node.visible) return [];
-
     if (node.type === "TEXT") return [node];
-
     if ("children" in node) {
         return (node as ChildrenMixin & SceneNode).children.flatMap(findVisibleTextNodes);
     }
@@ -30,22 +28,16 @@ function resolveStyleName(textStyleId: TextNode["textStyleId"]): { name: string;
     if (textStyleId === figma.mixed) {
         return { name: "🟡 Mixed", unlinked: false };
     }
-
     if (!textStyleId || textStyleId === "") {
-        return { name: "🔴 미연결", unlinked: true };
+        return { name: "🔴 Unlinked", unlinked: true };
     }
-
-    // Use sync API
     try {
         const s = figma.getStyleById(textStyleId as string);
         if (s && s.name) {
             return { name: s.name, unlinked: false };
         }
-    } catch (_) {
-        // Style may not be accessible (remote library)
-    }
-
-    return { name: "🔴 미연결", unlinked: true };
+    } catch (_) { }
+    return { name: "🔴 Unlinked", unlinked: true };
 }
 
 // ── Format helpers ──────────────────────────
@@ -72,10 +64,11 @@ function formatLineHeight(lh: TextNode["lineHeight"]): string {
     return `${parseFloat(lh.value.toFixed(2))}px`;
 }
 
-// ── Extract row data from a TEXT node ───────
+// ── Extract row data ────────────────────────
 function extractData(node: TextNode): TextRowData {
     const styleInfo = resolveStyleName(node.textStyleId);
     return {
+        nodeId: node.id,
         textContent: node.characters,
         styleName: styleInfo.name,
         fontSize: formatFontSize(node.fontSize),
@@ -89,26 +82,54 @@ function extractData(node: TextNode): TextRowData {
 // ── Main ────────────────────────────────────
 figma.showUI(__html__, { width: 780, height: 520, themeColors: true });
 
-const selection = figma.currentPage.selection;
+// ── Scan current selection & send to UI ─────
+function scanSelection() {
+    const selection = figma.currentPage.selection;
 
-if (selection.length === 0) {
-    figma.notify("⚠️ 대상을 선택해주세요", { timeout: 3000 });
-    figma.closePlugin();
-} else {
+    if (selection.length === 0) {
+        figma.ui.postMessage({ type: "empty" });
+        return;
+    }
+
     const textNodes = selection.flatMap(findVisibleTextNodes);
 
     if (textNodes.length === 0) {
-        figma.notify("⚠️ 선택 영역에 보이는 텍스트 레이어가 없습니다", { timeout: 3000 });
-        figma.closePlugin();
-    } else {
-        const rows: TextRowData[] = textNodes.map(extractData);
-        figma.ui.postMessage({ type: "result", data: rows });
+        figma.ui.postMessage({ type: "no-text" });
+        return;
     }
+
+    const rows: TextRowData[] = textNodes.map(extractData);
+    figma.ui.postMessage({ type: "result", data: rows });
 }
 
-// Listen for UI messages
-figma.ui.onmessage = (msg: { type: string }) => {
+// Run on startup
+scanSelection();
+
+// Re-scan whenever selection changes (skip if triggered by UI click)
+figma.on("selectionchange", () => {
+    if (isNavigating) {
+        isNavigating = false;
+        return;
+    }
+    scanSelection();
+});
+
+// ── Navigation flag ─────────────────────────
+let isNavigating = false;
+
+figma.ui.onmessage = (msg: { type: string; nodeId?: string }) => {
     if (msg.type === "close") {
         figma.closePlugin();
+    }
+
+    if (msg.type === "select-node" && msg.nodeId) {
+        const node = figma.getNodeById(msg.nodeId);
+        if (node && node.type === "TEXT") {
+            isNavigating = true;
+            figma.currentPage.selection = [node as SceneNode];
+            figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
+        } else {
+            figma.notify("⚠️ 레이어를 찾을 수 없습니다", { timeout: 2000 });
+        }
     }
 };

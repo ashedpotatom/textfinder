@@ -4,7 +4,6 @@
 // ─────────────────────────────────────────────
 // ── Recursive TEXT node finder (skips invisible) ──
 function findVisibleTextNodes(node) {
-    // Skip hidden nodes entirely
     if (!node.visible)
         return [];
     if (node.type === "TEXT")
@@ -20,19 +19,16 @@ function resolveStyleName(textStyleId) {
         return { name: "🟡 Mixed", unlinked: false };
     }
     if (!textStyleId || textStyleId === "") {
-        return { name: "🔴 미연결", unlinked: true };
+        return { name: "🔴 Unlinked", unlinked: true };
     }
-    // Use sync API
     try {
         const s = figma.getStyleById(textStyleId);
         if (s && s.name) {
             return { name: s.name, unlinked: false };
         }
     }
-    catch (_) {
-        // Style may not be accessible (remote library)
-    }
-    return { name: "🔴 미연결", unlinked: true };
+    catch (_) { }
+    return { name: "🔴 Unlinked", unlinked: true };
 }
 // ── Format helpers ──────────────────────────
 function formatFontSize(fontSize) {
@@ -61,10 +57,11 @@ function formatLineHeight(lh) {
         return `${parseFloat(lh.value.toFixed(2))}%`;
     return `${parseFloat(lh.value.toFixed(2))}px`;
 }
-// ── Extract row data from a TEXT node ───────
+// ── Extract row data ────────────────────────
 function extractData(node) {
     const styleInfo = resolveStyleName(node.textStyleId);
     return {
+        nodeId: node.id,
         textContent: node.characters,
         styleName: styleInfo.name,
         fontSize: formatFontSize(node.fontSize),
@@ -76,25 +73,46 @@ function extractData(node) {
 }
 // ── Main ────────────────────────────────────
 figma.showUI(__html__, { width: 780, height: 520, themeColors: true });
-const selection = figma.currentPage.selection;
-if (selection.length === 0) {
-    figma.notify("⚠️ 대상을 선택해주세요", { timeout: 3000 });
-    figma.closePlugin();
-}
-else {
+// ── Scan current selection & send to UI ─────
+function scanSelection() {
+    const selection = figma.currentPage.selection;
+    if (selection.length === 0) {
+        figma.ui.postMessage({ type: "empty" });
+        return;
+    }
     const textNodes = selection.flatMap(findVisibleTextNodes);
     if (textNodes.length === 0) {
-        figma.notify("⚠️ 선택 영역에 보이는 텍스트 레이어가 없습니다", { timeout: 3000 });
-        figma.closePlugin();
+        figma.ui.postMessage({ type: "no-text" });
+        return;
     }
-    else {
-        const rows = textNodes.map(extractData);
-        figma.ui.postMessage({ type: "result", data: rows });
-    }
+    const rows = textNodes.map(extractData);
+    figma.ui.postMessage({ type: "result", data: rows });
 }
-// Listen for UI messages
+// Run on startup
+scanSelection();
+// Re-scan whenever selection changes (skip if triggered by UI click)
+figma.on("selectionchange", () => {
+    if (isNavigating) {
+        isNavigating = false;
+        return;
+    }
+    scanSelection();
+});
+// ── Navigation flag ─────────────────────────
+let isNavigating = false;
 figma.ui.onmessage = (msg) => {
     if (msg.type === "close") {
         figma.closePlugin();
+    }
+    if (msg.type === "select-node" && msg.nodeId) {
+        const node = figma.getNodeById(msg.nodeId);
+        if (node && node.type === "TEXT") {
+            isNavigating = true;
+            figma.currentPage.selection = [node];
+            figma.viewport.scrollAndZoomIntoView([node]);
+        }
+        else {
+            figma.notify("⚠️ 레이어를 찾을 수 없습니다", { timeout: 2000 });
+        }
     }
 };

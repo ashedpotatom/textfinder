@@ -82,46 +82,39 @@
       text-overflow: ellipsis;
     }
 
-    /* Column widths */
     th:nth-child(1) {
-      width: 28%;
+      width: 26%;
     }
 
-    /* 텍스트 내용 */
     th:nth-child(2) {
       width: 20%;
     }
 
-    /* 스타일 이름 */
     th:nth-child(3) {
       width: 10%;
     }
 
-    /* 크기 */
     th:nth-child(4) {
       width: 18%;
     }
 
-    /* 폰트 패밀리 */
     th:nth-child(5) {
-      width: 12%;
+      width: 13%;
     }
 
-    /* 자간 */
     th:nth-child(6) {
-      width: 12%;
+      width: 13%;
     }
-
-    /* 행간 */
 
     /* ── Table Body ────────────────────── */
     tbody tr {
       border-bottom: 1px solid var(--figma-color-border, #f0f0f0);
+      cursor: pointer;
       transition: background 0.12s ease;
     }
 
     tbody tr:hover {
-      background: var(--figma-color-bg-hover, rgba(0, 0, 0, 0.03));
+      background: var(--figma-color-bg-hover, rgba(0, 100, 255, 0.06));
     }
 
     tbody tr:nth-child(even) {
@@ -129,7 +122,12 @@
     }
 
     tbody tr:nth-child(even):hover {
-      background: var(--figma-color-bg-hover, rgba(0, 0, 0, 0.045));
+      background: var(--figma-color-bg-hover, rgba(0, 100, 255, 0.06));
+    }
+
+    /* Selected row */
+    tbody tr.selected {
+      background: rgba(0, 100, 255, 0.12) !important;
     }
 
     tbody td {
@@ -141,9 +139,7 @@
       vertical-align: middle;
     }
 
-    /* Cell-specific styles */
     td.text-content {
-      color: var(--figma-color-text, #333);
       font-weight: 500;
     }
 
@@ -162,16 +158,12 @@
       text-align: right;
     }
 
-    /* ── Unlinked row highlight ────────── */
+    /* ── Unlinked row ──────────────────── */
     tr.unlinked td {
       color: #e00;
     }
 
-    tr.unlinked td.text-content {
-      color: #e00;
-    }
-
-    /* ── Mixed badge ───────────────────── */
+    /* ── Mixed ─────────────────────────── */
     .mixed {
       color: #d4a017;
       font-style: italic;
@@ -261,13 +253,11 @@
 
 <body>
 
-  <!-- Header -->
   <div class="header">
     <h1>📝 Text Finder</h1>
     <span class="badge" id="count">0 items</span>
   </div>
 
-  <!-- Table -->
   <div class="table-wrap" id="tableWrap">
     <div class="empty-state" id="emptyState">
       <span class="icon">🔍</span>
@@ -288,38 +278,29 @@
     </table>
   </div>
 
-  <!-- Footer -->
   <div class="footer">
     <div class="footer-info" id="footerInfo"></div>
     <div class="footer-actions">
-      <button class="btn btn-secondary" id="btnClose" title="닫기">닫기</button>
+      <button class="btn btn-secondary" id="btnClose">닫기</button>
       <button class="btn btn-primary" id="btnCopy" disabled>📋 CSV 복사</button>
     </div>
   </div>
 
   <script>
     var tableData = [];
+    var selectedRowIndex = -1;
 
-    // ── Escape TSV cell ───────────────────
     function escapeCell(val) {
       if (val == null) return '';
       var str = String(val);
-      if (/[\t\n\r"]/.test(str)) {
-        return '"' + str.replace(/"/g, '""') + '"';
-      }
+      if (/[\t\n\r"]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
       return str;
     }
 
-    // ── HTML escape ───────────────────────
     function esc(val) {
-      return String(val)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+      return String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    // ── Cell with mixed detection ─────────
     function cellHtml(val, cls) {
       var s = String(val);
       var isMixed = s === 'Mixed' || s.indexOf('🟡') !== -1;
@@ -328,9 +309,27 @@
       return '<td class="' + classes.trim() + '" title="' + esc(s) + '">' + esc(s) + '</td>';
     }
 
+    // ── Select row & notify plugin ────────
+    function selectRow(index) {
+      // Remove previous selection
+      var prev = document.querySelector('tr.selected');
+      if (prev) prev.classList.remove('selected');
+
+      selectedRowIndex = index;
+      var row = document.querySelectorAll('#tbody tr')[index];
+      if (row) row.classList.add('selected');
+
+      // Send nodeId to plugin sandbox
+      var nodeId = tableData[index] && tableData[index].nodeId;
+      if (nodeId) {
+        parent.postMessage({ pluginMessage: { type: 'select-node', nodeId: nodeId } }, '*');
+      }
+    }
+
     // ── Render table ──────────────────────
     function renderTable(rows) {
       tableData = rows;
+      selectedRowIndex = -1;
       var tbody = document.getElementById('tbody');
       var table = document.getElementById('resultTable');
       var empty = document.getElementById('emptyState');
@@ -353,7 +352,6 @@
       count.textContent = rows.length + ' item' + (rows.length > 1 ? 's' : '');
       btnCopy.disabled = false;
 
-      // Count unlinked
       var unlinkedCount = rows.filter(function (r) { return r.isUnlinked; }).length;
       if (unlinkedCount > 0) {
         footerInfo.innerHTML = '⚠️ 스타일 미연결: <span class="unlinked-count">' + unlinkedCount + '개</span>';
@@ -361,9 +359,9 @@
         footerInfo.innerHTML = '✅ 모든 텍스트에 스타일 연결됨';
       }
 
-      tbody.innerHTML = rows.map(function (r) {
-        var rowClass = r.isUnlinked ? ' class="unlinked"' : '';
-        return '<tr' + rowClass + '>'
+      tbody.innerHTML = rows.map(function (r, i) {
+        var rowClass = r.isUnlinked ? 'unlinked' : '';
+        return '<tr class="' + rowClass + '" data-index="' + i + '">'
           + cellHtml(r.textContent, 'text-content')
           + cellHtml(r.styleName, 'style-name')
           + cellHtml(r.fontSize, 'numeric')
@@ -372,61 +370,68 @@
           + cellHtml(r.lineHeight, 'numeric')
           + '</tr>';
       }).join('');
+
+      // Attach click handlers via delegation
+      tbody.onclick = function (e) {
+        var tr = e.target.closest('tr');
+        if (!tr) return;
+        var idx = parseInt(tr.getAttribute('data-index'), 10);
+        if (!isNaN(idx)) selectRow(idx);
+      };
     }
 
     // ── Copy as TSV ───────────────────────
     document.getElementById('btnCopy').addEventListener('click', function () {
       if (tableData.length === 0) return;
-
       var header = ['텍스트 내용', '스타일 이름', '크기', '폰트', '자간', '행간'];
       var lines = [header.join('\t')];
-
       tableData.forEach(function (r) {
         lines.push([
-          escapeCell(r.textContent),
-          escapeCell(r.styleName),
-          escapeCell(r.fontSize),
-          escapeCell(r.fontFamily),
-          escapeCell(r.letterSpacing),
-          escapeCell(r.lineHeight)
+          escapeCell(r.textContent), escapeCell(r.styleName),
+          escapeCell(r.fontSize), escapeCell(r.fontFamily),
+          escapeCell(r.letterSpacing), escapeCell(r.lineHeight)
         ].join('\t'));
       });
-
       var tsv = lines.join('\n');
+      var ta = document.createElement('textarea');
+      ta.value = tsv; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
 
-      // Copy to clipboard
-      var textarea = document.createElement('textarea');
-      textarea.value = tsv;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-
-      // Feedback
       var btn = document.getElementById('btnCopy');
-      var original = btn.textContent;
-      btn.textContent = '✅ 복사됨!';
-      btn.style.background = '#22c55e';
-      setTimeout(function () {
-        btn.textContent = original;
-        btn.style.background = '';
-      }, 1500);
+      var orig = btn.textContent;
+      btn.textContent = '✅ 복사됨!'; btn.style.background = '#22c55e';
+      setTimeout(function () { btn.textContent = orig; btn.style.background = ''; }, 1500);
     });
 
-    // ── Close ─────────────────────────────
     document.getElementById('btnClose').addEventListener('click', function () {
       parent.postMessage({ pluginMessage: { type: 'close' } }, '*');
     });
 
-    // ── Listen for data from plugin ───────
+    // ── Show empty state with message ────
+    function showEmptyState(msg) {
+      var table = document.getElementById('resultTable');
+      var empty = document.getElementById('emptyState');
+      var count = document.getElementById('count');
+      var btnCopy = document.getElementById('btnCopy');
+      var footerInfo = document.getElementById('footerInfo');
+      table.style.display = 'none';
+      empty.querySelector('.icon').textContent = '🔍';
+      empty.querySelector('p').textContent = msg;
+      empty.style.display = 'flex';
+      count.textContent = '0 items';
+      btnCopy.disabled = true;
+      footerInfo.textContent = '';
+      tableData = [];
+      selectedRowIndex = -1;
+    }
+
     window.onmessage = function (event) {
       var msg = event.data.pluginMessage;
       if (!msg) return;
-      if (msg.type === 'result') {
-        renderTable(msg.data);
-      }
+      if (msg.type === 'result') renderTable(msg.data);
+      if (msg.type === 'empty') showEmptyState('프레임이나 섹션을 선택해주세요');
+      if (msg.type === 'no-text') showEmptyState('선택 영역에 텍스트 레이어가 없습니다');
     };
   </script>
 </body>

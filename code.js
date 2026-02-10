@@ -227,4 +227,45 @@ figma.ui.onmessage = (msg) => {
             figma.notify("⚠️ 레이어를 찾을 수 없습니다", { timeout: 2000 });
         }
     }
+    // Create image on canvas from captured table
+    if (msg.type === "create-image" && msg.bytes) {
+        const bytes = new Uint8Array(msg.bytes);
+        const image = figma.createImage(bytes);
+        const rect = figma.createRectangle();
+        // Retina: canvas size is 2x, so display at half
+        const displayWidth = msg.width / 2;
+        const displayHeight = msg.height / 2;
+        rect.resize(displayWidth, displayHeight);
+        rect.name = "Text Finder Capture";
+        // Fill with the captured image
+        rect.fills = [{
+                type: "IMAGE",
+                imageHash: image.hash,
+                scaleMode: "FILL"
+            }];
+        // Position: right of the active frame, or viewport center
+        if (lastActiveFrameId) {
+            const frameNode = figma.getNodeById(lastActiveFrameId);
+            if (frameNode && "x" in frameNode && "width" in frameNode) {
+                const sn = frameNode;
+                rect.x = sn.x + sn.width + 50;
+                rect.y = sn.y;
+            }
+            else {
+                const center = figma.viewport.center;
+                rect.x = center.x - displayWidth / 2;
+                rect.y = center.y - displayHeight / 2;
+            }
+        }
+        else {
+            const center = figma.viewport.center;
+            rect.x = center.x - displayWidth / 2;
+            rect.y = center.y - displayHeight / 2;
+        }
+        // Select and focus
+        isNavigating = true;
+        figma.currentPage.selection = [rect];
+        figma.viewport.scrollAndZoomIntoView([rect]);
+        figma.notify("✅ 테이블 이미지가 캔버스에 추가되었습니다", { timeout: 2000 });
+    }
 };

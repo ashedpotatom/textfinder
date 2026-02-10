@@ -110,7 +110,7 @@ function markModified(rows: TextRowData[]): TextRowData[] {
     }));
 }
 
-const CONTAINER_TYPES = new Set(["FRAME", "SECTION", "COMPONENT", "COMPONENT_SET", "INSTANCE", "GROUP"]);
+const CONTAINER_TYPES = new Set(["FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE", "GROUP"]);
 
 // ── Check if a node is a descendant of a specific frame ──
 function isChildOf(node: BaseNode, ancestorId: string): boolean {
@@ -209,7 +209,10 @@ figma.on("selectionchange", () => {
         }
     }
 
-    // Case C: Everything else (empty click, unrelated node) → do nothing, keep state
+    // Case C: Selection is unrelated to active frame → valid "Strict Mode" reset
+    // If we're here, it means we selected something that isn't a Frame, and isn't inside the current Frame.
+    lastActiveFrameId = null;
+    figma.ui.postMessage({ type: "empty" });
 });
 
 // ── Document change handler (real-time edit reflection) ──
@@ -223,7 +226,7 @@ figma.on("documentchange", () => {
 });
 
 // ── Listen for UI messages ──────────────────
-figma.ui.onmessage = (msg: { type: string; nodeId?: string; ids?: string[] }) => {
+figma.ui.onmessage = (msg: any) => {
     if (msg.type === "close") {
         figma.closePlugin();
     }
@@ -256,5 +259,49 @@ figma.ui.onmessage = (msg: { type: string; nodeId?: string; ids?: string[] }) =>
         } else {
             figma.notify("⚠️ 레이어를 찾을 수 없습니다", { timeout: 2000 });
         }
+    }
+
+    // Create image on canvas from captured table
+    if (msg.type === "create-image" && msg.bytes) {
+        const bytes = new Uint8Array(msg.bytes);
+        const image = figma.createImage(bytes);
+        const rect = figma.createRectangle();
+
+        // Retina: canvas size is 2x, so display at half
+        const displayWidth = msg.width / 2;
+        const displayHeight = msg.height / 2;
+        rect.resize(displayWidth, displayHeight);
+        rect.name = "Text Finder Capture";
+
+        // Fill with the captured image
+        rect.fills = [{
+            type: "IMAGE",
+            imageHash: image.hash,
+            scaleMode: "FILL"
+        }];
+
+        // Position: right of the active frame, or viewport center
+        if (lastActiveFrameId) {
+            const frameNode = figma.getNodeById(lastActiveFrameId);
+            if (frameNode && "x" in frameNode && "width" in frameNode) {
+                const sn = frameNode as SceneNode;
+                rect.x = sn.x + sn.width + 50;
+                rect.y = sn.y;
+            } else {
+                const center = figma.viewport.center;
+                rect.x = center.x - displayWidth / 2;
+                rect.y = center.y - displayHeight / 2;
+            }
+        } else {
+            const center = figma.viewport.center;
+            rect.x = center.x - displayWidth / 2;
+            rect.y = center.y - displayHeight / 2;
+        }
+
+        // Select and focus
+        isNavigating = true;
+        figma.currentPage.selection = [rect];
+        figma.viewport.scrollAndZoomIntoView([rect]);
+        figma.notify("✅ 테이블 이미지가 캔버스에 추가되었습니다", { timeout: 2000 });
     }
 };

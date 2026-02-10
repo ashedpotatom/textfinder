@@ -3,6 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
     /* ── Reset & Base ──────────────────── */
     * {
@@ -319,6 +320,7 @@
     <div class="footer-info" id="footerInfo"></div>
     <div class="footer-actions">
       <button class="btn btn-secondary" id="btnClose">닫기</button>
+      <button class="btn btn-primary" id="btnCapture" disabled style="background:#4A90D9">📸 캔버스에 추가</button>
       <button class="btn btn-primary" id="btnCopy" disabled>📋 CSV 복사</button>
     </div>
   </div>
@@ -513,6 +515,7 @@
         empty.style.display = 'flex';
         count.textContent = '0 items';
         btnCopy.disabled = true;
+        document.getElementById('btnCapture').disabled = true;
         footerInfo.textContent = '';
         return;
       }
@@ -521,6 +524,7 @@
       table.style.display = 'table';
       count.textContent = rows.length + ' item' + (rows.length > 1 ? 's' : '');
       btnCopy.disabled = false;
+      document.getElementById('btnCapture').disabled = false;
 
       var unlinkedCount = rows.filter(function (r) { return r.isUnlinked; }).length;
       var modifiedCount = rows.filter(function (r) { return r.isModified; }).length;
@@ -584,6 +588,81 @@
       parent.postMessage({ pluginMessage: { type: 'close' } }, '*');
     });
 
+    // ── Capture table & insert into canvas ──
+    document.getElementById('btnCapture').addEventListener('click', function () {
+      if (tableData.length === 0) return;
+
+      var btn = document.getElementById('btnCapture');
+      var originalText = btn.textContent;
+      btn.textContent = '📸 처리 중...';
+      btn.style.opacity = '0.7';
+      btn.style.pointerEvents = 'none';
+
+      var tableWrap = document.getElementById('tableWrap');
+      if (!tableWrap) return;
+
+      // Clone and expand off-screen for full-height capture
+      var clone = tableWrap.cloneNode(true);
+      Object.assign(clone.style, {
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        width: tableWrap.clientWidth + 'px',
+        height: 'auto',
+        overflow: 'visible',
+        zIndex: '-9999',
+        background: '#2C2C2C'
+      });
+      document.body.appendChild(clone);
+
+      html2canvas(clone, {
+        scale: 2,
+        backgroundColor: '#2C2C2C',
+        useCORS: true,
+        logging: false
+      }).then(function (canvas) {
+        if (document.body.contains(clone)) document.body.removeChild(clone);
+
+        canvas.toBlob(function (blob) {
+          if (!blob) {
+            btn.textContent = '❌ 실패';
+            btn.style.opacity = '1';
+            setTimeout(function () { btn.textContent = originalText; btn.style.pointerEvents = 'auto'; }, 1500);
+            return;
+          }
+
+          var reader = new FileReader();
+          reader.onload = function () {
+            var bytes = new Uint8Array(reader.result);
+            parent.postMessage({
+              pluginMessage: {
+                type: 'create-image',
+                bytes: bytes,
+                width: canvas.width,
+                height: canvas.height
+              }
+            }, '*');
+
+            btn.textContent = '✅ 추가됨!';
+            btn.style.background = '#22c55e';
+            btn.style.opacity = '1';
+            setTimeout(function () {
+              btn.textContent = originalText;
+              btn.style.background = '#4A90D9';
+              btn.style.pointerEvents = 'auto';
+            }, 1500);
+          };
+          reader.readAsArrayBuffer(blob);
+        }, 'image/png', 1.0);
+      }).catch(function (err) {
+        console.error('캡쳐 에러:', err);
+        if (document.body.contains(clone)) document.body.removeChild(clone);
+        btn.textContent = '❌ 실패';
+        btn.style.opacity = '1';
+        setTimeout(function () { btn.textContent = originalText; btn.style.pointerEvents = 'auto'; }, 1500);
+      });
+    });
+
     // ── Show empty state with message ──────
     function showEmptyState(msg) {
       var table = document.getElementById('resultTable');
@@ -597,6 +676,7 @@
       empty.style.display = 'flex';
       count.textContent = '0 items';
       btnCopy.disabled = true;
+      document.getElementById('btnCapture').disabled = true;
       footerInfo.textContent = '';
       rawData = [];
       tableData = [];
@@ -628,7 +708,7 @@
       var msg = event.data.pluginMessage;
       if (!msg) return;
       if (msg.type === 'result') renderTable(msg.data);
-      if (msg.type === 'empty') showEmptyState('프레임이나 섹션을 선택해주세요');
+      if (msg.type === 'empty') showEmptyState('프레임을 선택해주세요');
       if (msg.type === 'no-text') showEmptyState('선택 영역에 텍스트 레이어가 없습니다');
       if (msg.type === 'sync-selection') syncSelection(msg.ids || []);
     };

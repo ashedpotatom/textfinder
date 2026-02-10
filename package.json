@@ -1,0 +1,12 @@
+{
+    "name": "textfinder-figmaplugin",
+    "version": "1.0.0",
+    "description": "Figma plugin to extract typography specs from selected frames",
+    "scripts": {
+        "build": "tsc -p tsconfig.json"
+    },
+    "devDependencies": {
+        "@figma/plugin-typings": "^1.100.0",
+        "typescript": "^5.3.0"
+    }
+}

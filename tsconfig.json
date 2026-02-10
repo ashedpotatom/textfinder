@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "target": "ES2017",
+        "lib": [
+            "ES2017",
+            "ES2019"
+        ],
+        "strict": true,
+        "moduleResolution": "node"
+    },
+    "files": [
+        "code.ts",
+        "node_modules/@figma/plugin-typings/index.d.ts"
+    ]
+}

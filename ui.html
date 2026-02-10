@@ -88,6 +88,23 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s ease;
+    }
+
+    thead th:hover {
+      background: var(--figma-color-bg-hover, #eaeaea);
+    }
+
+    thead th .sort-arrow {
+      font-size: 10px;
+      margin-left: 4px;
+      opacity: 0.4;
+    }
+
+    thead th.sorted .sort-arrow {
+      opacity: 1;
     }
 
     th:nth-child(1) {
@@ -118,7 +135,8 @@
     tbody tr {
       border-bottom: 1px solid var(--figma-color-border, #f0f0f0);
       cursor: pointer;
-      transition: background 0.12s ease;
+      transition: background 0.1s ease;
+      user-select: none;
     }
 
     tbody tr:hover {
@@ -285,12 +303,12 @@
     <table id="resultTable" style="display:none">
       <thead>
         <tr>
-          <th>텍스트 내용</th>
-          <th>스타일 이름</th>
-          <th>크기</th>
-          <th>폰트</th>
-          <th>자간</th>
-          <th>행간</th>
+          <th data-key="textContent">텍스트 내용 <span class="sort-arrow"></span></th>
+          <th data-key="styleName">스타일 이름 <span class="sort-arrow"></span></th>
+          <th data-key="fontSize">크기 <span class="sort-arrow"></span></th>
+          <th data-key="fontFamily">폰트 <span class="sort-arrow"></span></th>
+          <th data-key="letterSpacing">자간 <span class="sort-arrow"></span></th>
+          <th data-key="lineHeight">행간 <span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -306,8 +324,12 @@
   </div>
 
   <script>
-    var tableData = [];
-    var selectedRowIndex = -1;
+    var rawData = [];       // original unsorted data from plugin
+    var tableData = [];     // currently displayed (possibly sorted)
+    var selectedIndices = new Set();
+    var lastClickedIndex = -1;
+    var sortKey = null;
+    var sortOrder = 'asc';  // 'asc' or 'desc'
 
     function escapeCell(val) {
       if (val == null) return '';
@@ -328,27 +350,156 @@
       return '<td class="' + classes.trim() + '" title="' + esc(s) + '">' + esc(s) + '</td>';
     }
 
-    // ── Select row & notify plugin ────────
-    function selectRow(index) {
-      // Remove previous selection
-      var prev = document.querySelector('tr.selected');
-      if (prev) prev.classList.remove('selected');
+    // ── Update row selection visuals ──────────
+    function updateSelectionVisuals() {
+      var rows = document.querySelectorAll('#tbody tr');
+      rows.forEach(function (row, i) {
+        if (selectedIndices.has(i)) {
+          row.classList.add('selected');
+        } else {
+          row.classList.remove('selected');
+        }
+      });
+    }
 
-      selectedRowIndex = index;
-      var row = document.querySelectorAll('#tbody tr')[index];
-      if (row) row.classList.add('selected');
-
-      // Send nodeId to plugin sandbox
-      var nodeId = tableData[index] && tableData[index].nodeId;
-      if (nodeId) {
-        parent.postMessage({ pluginMessage: { type: 'select-node', nodeId: nodeId } }, '*');
+    // ── Send selected node IDs to plugin ─────
+    function notifySelection() {
+      var ids = [];
+      selectedIndices.forEach(function (i) {
+        if (tableData[i] && tableData[i].nodeId) {
+          ids.push(tableData[i].nodeId);
+        }
+      });
+      if (ids.length === 1) {
+        parent.postMessage({ pluginMessage: { type: 'select-node', nodeId: ids[0] } }, '*');
+      } else if (ids.length > 1) {
+        parent.postMessage({ pluginMessage: { type: 'select-nodes', ids: ids } }, '*');
       }
     }
 
-    // ── Render table ──────────────────────
+    // ── Handle row click with modifiers ──────
+    function handleRowClick(index, e) {
+      if (e.metaKey || e.ctrlKey) {
+        // Cmd/Ctrl + Click: toggle individual
+        if (selectedIndices.has(index)) {
+          selectedIndices.delete(index);
+        } else {
+          selectedIndices.add(index);
+        }
+      } else if (e.shiftKey && lastClickedIndex !== -1) {
+        // Shift + Click: range select
+        var start = Math.min(lastClickedIndex, index);
+        var end = Math.max(lastClickedIndex, index);
+        for (var i = start; i <= end; i++) {
+          selectedIndices.add(i);
+        }
+      } else {
+        // Normal click: single select
+        selectedIndices.clear();
+        selectedIndices.add(index);
+      }
+      lastClickedIndex = index;
+      updateSelectionVisuals();
+      notifySelection();
+    }
+
+    // ── Sort data (3-state: asc → desc → default) ──
+    function sortData(key) {
+      if (sortKey === key) {
+        if (sortOrder === 'asc') {
+          sortOrder = 'desc';
+        } else if (sortOrder === 'desc') {
+          // Reset to default
+          sortKey = null;
+          sortOrder = 'default';
+          tableData = rawData.slice();
+          // Clear all header arrows
+          document.querySelectorAll('thead th').forEach(function (th) {
+            th.classList.remove('sorted');
+            var arrow = th.querySelector('.sort-arrow');
+            if (arrow) arrow.textContent = '';
+          });
+          selectedIndices.clear();
+          lastClickedIndex = -1;
+          renderRows();
+          return;
+        }
+      } else {
+        sortKey = key;
+        sortOrder = 'asc';
+      }
+
+      tableData = rawData.slice().sort(function (a, b) {
+        var va = String(a[key] || '').toLowerCase();
+        var vb = String(b[key] || '').toLowerCase();
+        var na = parseFloat(va), nb = parseFloat(vb);
+        if (!isNaN(na) && !isNaN(nb)) {
+          return sortOrder === 'asc' ? na - nb : nb - na;
+        }
+        if (va < vb) return sortOrder === 'asc' ? -1 : 1;
+        if (va > vb) return sortOrder === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+      // Update header arrows
+      document.querySelectorAll('thead th').forEach(function (th) {
+        var k = th.getAttribute('data-key');
+        var arrow = th.querySelector('.sort-arrow');
+        if (k === key) {
+          th.classList.add('sorted');
+          arrow.textContent = sortOrder === 'asc' ? '▲' : '▼';
+        } else {
+          th.classList.remove('sorted');
+          arrow.textContent = '';
+        }
+      });
+
+      selectedIndices.clear();
+      lastClickedIndex = -1;
+      renderRows();
+    }
+
+    // ── Render table body only ─────────────
+    function renderRows() {
+      var tbody = document.getElementById('tbody');
+      tbody.innerHTML = tableData.map(function (r, i) {
+        var classes = [];
+        if (r.isUnlinked) classes.push('unlinked');
+        if (r.isModified) classes.push('modified');
+        return '<tr class="' + classes.join(' ') + '" data-index="' + i + '" data-id="' + esc(r.nodeId) + '">'
+          + cellHtml(r.textContent, 'text-content')
+          + cellHtml(r.styleName, 'style-name')
+          + cellHtml(r.fontSize, 'numeric')
+          + cellHtml(r.fontFamily, 'font-info')
+          + cellHtml(r.letterSpacing, 'numeric')
+          + cellHtml(r.lineHeight, 'numeric')
+          + '</tr>';
+      }).join('');
+    }
+
+    // ── Render table (full) ───────────────
     function renderTable(rows) {
-      tableData = rows;
-      selectedRowIndex = -1;
+      rawData = rows;
+      // Apply current sort if active
+      if (sortKey && sortOrder !== 'default') {
+        tableData = rawData.slice().sort(function (a, b) {
+          var va = String(a[sortKey] || '').toLowerCase();
+          var vb = String(b[sortKey] || '').toLowerCase();
+          var na = parseFloat(va), nb = parseFloat(vb);
+          if (!isNaN(na) && !isNaN(nb)) {
+            return sortOrder === 'asc' ? na - nb : nb - na;
+          }
+          if (va < vb) return sortOrder === 'asc' ? -1 : 1;
+          if (va > vb) return sortOrder === 'asc' ? 1 : -1;
+          return 0;
+        });
+      } else {
+        tableData = rows;
+      }
+
+      selectedIndices.clear();
+      lastClickedIndex = -1;
+
       var tbody = document.getElementById('tbody');
       var table = document.getElementById('resultTable');
       var empty = document.getElementById('emptyState');
@@ -386,28 +537,24 @@
         footerInfo.innerHTML = infoParts.join(' &nbsp;│&nbsp; ');
       }
 
-      tbody.innerHTML = rows.map(function (r, i) {
-        var classes = [];
-        if (r.isUnlinked) classes.push('unlinked');
-        if (r.isModified) classes.push('modified');
-        return '<tr class="' + classes.join(' ') + '" data-index="' + i + '">'
-          + cellHtml(r.textContent, 'text-content')
-          + cellHtml(r.styleName, 'style-name')
-          + cellHtml(r.fontSize, 'numeric')
-          + cellHtml(r.fontFamily, 'font-info')
-          + cellHtml(r.letterSpacing, 'numeric')
-          + cellHtml(r.lineHeight, 'numeric')
-          + '</tr>';
-      }).join('');
-
-      // Attach click handlers via delegation
-      tbody.onclick = function (e) {
-        var tr = e.target.closest('tr');
-        if (!tr) return;
-        var idx = parseInt(tr.getAttribute('data-index'), 10);
-        if (!isNaN(idx)) selectRow(idx);
-      };
+      renderRows();
     }
+
+    // ── Event delegation: tbody clicks ─────
+    document.getElementById('tbody').addEventListener('click', function (e) {
+      var tr = e.target.closest('tr');
+      if (!tr) return;
+      var idx = parseInt(tr.getAttribute('data-index'), 10);
+      if (!isNaN(idx)) handleRowClick(idx, e);
+    });
+
+    // ── Event delegation: thead clicks (sorting) ──
+    document.querySelector('thead tr').addEventListener('click', function (e) {
+      var th = e.target.closest('th');
+      if (!th) return;
+      var key = th.getAttribute('data-key');
+      if (key) sortData(key);
+    });
 
     // ── Copy as TSV ───────────────────────
     document.getElementById('btnCopy').addEventListener('click', function () {
@@ -437,7 +584,7 @@
       parent.postMessage({ pluginMessage: { type: 'close' } }, '*');
     });
 
-    // ── Show empty state with message ────
+    // ── Show empty state with message ──────
     function showEmptyState(msg) {
       var table = document.getElementById('resultTable');
       var empty = document.getElementById('emptyState');
@@ -451,8 +598,30 @@
       count.textContent = '0 items';
       btnCopy.disabled = true;
       footerInfo.textContent = '';
+      rawData = [];
       tableData = [];
-      selectedRowIndex = -1;
+      selectedIndices.clear();
+      lastClickedIndex = -1;
+    }
+
+    // ── Sync selection from canvas ────────
+    function syncSelection(ids) {
+      selectedIndices.clear();
+      var rows = document.querySelectorAll('#tbody tr');
+      var firstMatch = null;
+      rows.forEach(function (row, i) {
+        var rowId = row.getAttribute('data-id');
+        if (ids.indexOf(rowId) !== -1) {
+          row.classList.add('selected');
+          selectedIndices.add(i);
+          if (!firstMatch) firstMatch = row;
+        } else {
+          row.classList.remove('selected');
+        }
+      });
+      if (firstMatch) {
+        firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }
 
     window.onmessage = function (event) {
@@ -461,6 +630,7 @@
       if (msg.type === 'result') renderTable(msg.data);
       if (msg.type === 'empty') showEmptyState('프레임이나 섹션을 선택해주세요');
       if (msg.type === 'no-text') showEmptyState('선택 영역에 텍스트 레이어가 없습니다');
+      if (msg.type === 'sync-selection') syncSelection(msg.ids || []);
     };
   </script>
 </body>

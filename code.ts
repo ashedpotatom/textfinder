@@ -132,6 +132,14 @@ function scanFrame(frameId: string, isNewContext: boolean = false) {
 
     const textNodes = (frameNode as ChildrenMixin & SceneNode).children.flatMap(findVisibleTextNodes);
 
+    // Sort by visual order: top-to-bottom (Y), then left-to-right (X)
+    textNodes.sort((a, b) => {
+        const ay = a.absoluteTransform[1][2];
+        const by = b.absoluteTransform[1][2];
+        if (ay !== by) return ay - by;
+        return a.absoluteTransform[0][2] - b.absoluteTransform[0][2];
+    });
+
     if (textNodes.length === 0) {
         figma.ui.postMessage({ type: "no-text" });
         return;
@@ -191,11 +199,12 @@ figma.on("selectionchange", () => {
         }
     }
 
-    // Case B: Selected node is a child of the active frame → re-scan (reflect edits)
+    // Case B: Selected node is a child of the active frame → sync highlight
     if (lastActiveFrameId && selection.length > 0) {
-        const isInsideActiveFrame = selection.some(n => isChildOf(n, lastActiveFrameId!));
-        if (isInsideActiveFrame) {
-            scanFrame(lastActiveFrameId);
+        const childNodes = selection.filter(n => isChildOf(n, lastActiveFrameId!));
+        if (childNodes.length > 0) {
+            const ids = childNodes.map(n => n.id);
+            figma.ui.postMessage({ type: "sync-selection", ids: ids });
             return;
         }
     }
@@ -214,17 +223,36 @@ figma.on("documentchange", () => {
 });
 
 // ── Listen for UI messages ──────────────────
-figma.ui.onmessage = (msg: { type: string; nodeId?: string }) => {
+figma.ui.onmessage = (msg: { type: string; nodeId?: string; ids?: string[] }) => {
     if (msg.type === "close") {
         figma.closePlugin();
     }
 
+    // Single node select (legacy / row click)
     if (msg.type === "select-node" && msg.nodeId) {
         const node = figma.getNodeById(msg.nodeId);
         if (node && node.type === "TEXT") {
             isNavigating = true;
             figma.currentPage.selection = [node as SceneNode];
             figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
+        } else {
+            figma.notify("⚠️ 레이어를 찾을 수 없습니다", { timeout: 2000 });
+        }
+    }
+
+    // Multi-node select
+    if (msg.type === "select-nodes" && msg.ids && msg.ids.length > 0) {
+        const nodes: SceneNode[] = [];
+        for (const id of msg.ids) {
+            const node = figma.getNodeById(id);
+            if (node) nodes.push(node as SceneNode);
+        }
+        if (nodes.length > 0) {
+            isNavigating = true;
+            figma.currentPage.selection = nodes;
+            figma.viewport.scrollAndZoomIntoView(nodes);
+            // Zoom out slightly for breathing room
+            figma.viewport.zoom = figma.viewport.zoom * 0.8;
         } else {
             figma.notify("⚠️ 레이어를 찾을 수 없습니다", { timeout: 2000 });
         }
